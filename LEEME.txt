@@ -1,0 +1,22 @@
+VERITY CHAT - mod SOLO de servidor (Forge 1.20.1)
+
+Que hace: cuando un jugador escribe "verity" (o "veri") en el chat, Verity responde.
+Ejemplos: "hola verity", "verity cuentame un chiste", "verity te quiero", "verity ven".
+Los jugadores NO necesitan instalar nada. Solo el servidor.
+
+COMO OBTENER EL .JAR (sin instalar nada, gratis):
+1. Entra a github.com y crea una cuenta (o inicia sesion).
+2. New repository -> nombre: veritychat -> Create repository.
+3. "uploading an existing file" -> arrastra TODO lo de esta carpeta MENOS la carpeta .github
+   (build.gradle, settings.gradle, gradle.properties, la carpeta src, .gitignore).
+4. Add file -> Create new file. En el nombre escribe: .github/workflows/build.yml
+   y pega dentro el contenido del archivo build.yml de esta carpeta. Commit.
+5. Pestaña "Actions": espera ~3 min a que salga la palomita verde.
+6. Abre esa ejecucion -> abajo en "Artifacts" descarga "veritychat-jar" (es un zip con el .jar).
+7. Pon el .jar en la carpeta mods DEL SERVIDOR y reinicia el servidor.
+
+DATAPACK: actualiza verity.zip (nuevo, trae la carpeta chat). Despues de ponerlo: /reload
+
+COMANDOS: /function verity:chat/apagar   y   /function verity:chat/encender
+Las respuestas se editan en data/verity/functions/chat/*.mcfunction
+Las palabras clave se editan en VerityChat.java (lista TEMAS) y hay que recompilar.
