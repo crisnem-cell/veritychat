@@ -78,6 +78,9 @@ public class VerityChat {
     private AiClient ia;
     private long cooldownMs = 6000L;
     private int maxHistorial = 6;
+    private boolean eventosActivos = true;
+    private long esperaEventosMs = 300000L;
+    private volatile long ultimoEvento = 0L;
 
     public VerityChat() {
         cargarConfig();
@@ -96,12 +99,16 @@ public class VerityChat {
                             + "api_key=\n"
                             + "model=claude-haiku-5-5\n"
                             + "api_url=https://api.anthropic.com/v1/messages\n"
-                            + "max_tokens=150\n"
+                            + "max_tokens=250\n"
                             + "# segundos de espera entre respuestas para el mismo jugador\n"
                             + "cooldown_segundos=6\n"
                             + "# cuantos mensajes recuerda por jugador (par = ida y vuelta)\n"
                             + "historial=6\n"
                             + "# deja vacio para usar la personalidad por defecto (en una sola linea)\n"
+                            + "# true = Verity puede activar minijuegos, ruleta y desastres cuando quiera (solo esos)\n"
+                            + "eventos=true\n"
+                            + "# segundos minimos entre un evento y otro activado por Verity\n"
+                            + "espera_eventos_segundos=300\n"
                             + "personalidad=\n");
                 }
             }
@@ -113,6 +120,8 @@ public class VerityChat {
         }
         cooldownMs = 1000L * num(cfg.getProperty("cooldown_segundos"), 6);
         maxHistorial = Math.max(0, num(cfg.getProperty("historial"), 6)) / 2 * 2;
+        eventosActivos = !"false".equalsIgnoreCase(cfg.getProperty("eventos", "true").trim());
+        esperaEventosMs = 1000L * num(cfg.getProperty("espera_eventos_segundos"), 300);
         String clave = cfg.getProperty("api_key", "").trim();
         if (!clave.isEmpty()) {
             String pers = cfg.getProperty("personalidad", "").trim();
@@ -120,7 +129,7 @@ public class VerityChat {
                     cfg.getProperty("api_url", "https://api.anthropic.com/v1/messages").trim(),
                     clave,
                     cfg.getProperty("model", "claude-haiku-5-5").trim(),
-                    num(cfg.getProperty("max_tokens"), 150),
+                    num(cfg.getProperty("max_tokens"), 250),
                     pers.isEmpty() ? PERSONALIDAD_DEFECTO : pers);
         }
     }
@@ -180,29 +189,55 @@ public class VerityChat {
 
     private void responderConIa(MinecraftServer server, UUID id, String uuid, String nombre, String original, String tema) {
         String respuesta = null;
+        String funcion = null;
+        String nombreAccion = null;
         try {
             List<String[]> hist;
             synchronized (historiales) {
                 hist = new ArrayList<>(historiales.getOrDefault(id, new ArrayList<>()));
             }
             String mensaje = nombre + ": " + original;
-            respuesta = limpiar(ia.preguntar(hist, mensaje));
-            if (respuesta != null && !respuesta.isEmpty()) {
-                synchronized (historiales) {
-                    List<String[]> h = historiales.computeIfAbsent(id, k -> new ArrayList<>());
-                    h.add(new String[]{"user", mensaje});
-                    h.add(new String[]{"assistant", respuesta});
-                    while (h.size() > maxHistorial) {
-                        h.remove(0);
-                        h.remove(0);
+            AiClient.Respuesta r = ia.preguntar(hist, mensaje, eventosActivos);
+            respuesta = limpiar(r.texto);
+            for (String a : r.comandos) {
+                String f = Acciones.resolver(a);
+                if (f == null) {
+                    LOGGER.warn("VerityChat: accion RECHAZADA (no esta en la lista): " + a);
+                } else if (funcion == null) {
+                    long ahora = System.currentTimeMillis();
+                    if (ahora - ultimoEvento < esperaEventosMs) {
+                        LOGGER.info("VerityChat: la IA quiso activar " + a + " pero aun esta en espera.");
+                    } else {
+                        ultimoEvento = ahora;
+                        funcion = f;
+                        nombreAccion = a;
                     }
+                }
+            }
+            if (funcion != null && (respuesta == null || respuesta.isEmpty())) {
+                respuesta = "Me dio por activar algo... no pregunten.";
+            }
+            String paraHistorial = (respuesta == null || respuesta.isEmpty()) ? "(no dije nada)" : respuesta;
+            if (nombreAccion != null) {
+                paraHistorial = paraHistorial + " (active: " + nombreAccion + ")";
+            }
+            synchronized (historiales) {
+                List<String[]> h = historiales.computeIfAbsent(id, k -> new ArrayList<>());
+                h.add(new String[]{"user", mensaje});
+                h.add(new String[]{"assistant", paraHistorial});
+                while (h.size() > maxHistorial) {
+                    h.remove(0);
+                    h.remove(0);
                 }
             }
         } catch (Exception e) {
             LOGGER.warn("VerityChat: la IA fallo (" + e.getMessage() + "), uso frases del datapack.");
+            respuesta = null;
+            funcion = null;
         }
 
         final String texto = respuesta;
+        final String fn = funcion;
         server.execute(() -> {
             if (texto == null || texto.isEmpty()) {
                 frasePrograma(server, uuid, tema);
@@ -215,6 +250,20 @@ public class VerityChat {
             server.getCommands().performPrefixedCommand(fuente,
                     "execute as " + uuid + " at @s run function verity:chat/ia_efecto");
         });
+
+        if (fn != null) {
+            try {
+                Thread.sleep(3000L); // pausa dramatica antes de activar
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            final String f = fn;
+            server.execute(() -> {
+                LOGGER.info("VerityChat: la IA activa " + f);
+                CommandSourceStack fuente = server.createCommandSourceStack().withSuppressedOutput();
+                server.getCommands().performPrefixedCommand(fuente, "function " + f);
+            });
+        }
     }
 
     private void frasePrograma(MinecraftServer server, String uuid, String tema) {
